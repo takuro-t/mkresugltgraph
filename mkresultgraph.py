@@ -135,7 +135,8 @@ class LionFX(CsvControl):
         if not self.target_lines:
             raise MyException('Aggregation data is not found')
 
-    def get_aggregate_data(self, from_time, to_time, segment='5m'):
+    # not use
+    def _get_aggregate_data_(self, from_time, to_time, segment='5m'):
         if not self.target_lines:
             self._filter_aggregate_data(from_time, to_time)
 
@@ -158,6 +159,27 @@ class LionFX(CsvControl):
         logger.info('Successfully to sort by time')
         return result_dict
 
+    def get_aggregate_data(self, from_time, to_time, segment='5m'):
+        result_list = []
+        if not self.target_lines:
+            self._filter_aggregate_data(from_time, to_time)
+
+        logger.info('Filter by trade set')
+        for d in self.target_lines:
+            result_list.append({
+                'start_time' : self.get_timedate(self._get_time_unit(d['start_time'],segment)),
+                'end_time'   : self.get_timedate(self._get_time_unit(d['end_time'],segment)),
+                'start_point': float(d['start_point']),
+                'end_point'   : float(d['end_point']),
+                'kind':d['kind']
+            })
+
+        for r in result_list:
+            logger.info(r)
+
+        logger.info('The count of trade sets is {}'.format(len(result_list)))
+        return result_list
+
     def _get_margin_time(self, time, segment, is_next=False):
         dt = self.get_timedate(self._get_time_unit(time,segment))
         interval = int(self._replace_time_unit(segment))
@@ -169,7 +191,8 @@ class LionFX(CsvControl):
                     if is_next else dt - datetime.timedelta(minutes=interval)
         return dt.strftime('%Y/%m/%d %H:%M:%S')
 
-    def _get_range_base(self, target_lines, segment='5m'):
+    # not use
+    def _get_range_base_(self, target_lines, segment='5m'):
         _start = min(min(_dict['start_time'] for _dict in target_lines),
                      min(_dict['end_time'] for _dict in target_lines))
         _end = max(max(_dict['start_time'] for _dict in target_lines),
@@ -180,7 +203,7 @@ class LionFX(CsvControl):
                    min(_dict['end_point'] for _dict in target_lines))
 
         start_time = self._get_margin_time(_start, segment)
-        end_time = self._get_margin_time(_end, segment, is_next=False)
+        end_time = self._get_margin_time(_end, segment, is_next=True)
 
         max_point = float(Decimal(_max).quantize(Decimal('.1'),rounding=ROUND_UP))
         min_point = float(Decimal(_min).quantize(Decimal('.1'),rounding=ROUND_DOWN))
@@ -199,11 +222,26 @@ class LionFX(CsvControl):
                 'max':max_point, 'min':min_point,
                 'segment':interval}
 
-    def get_range(self, from_time, to_time, segment='5m'):
-        if not self.target_lines:
-            self._filter_aggregate_data(from_time, to_time)
+    def _get_range_base(self, target_lines):
+        _max = max(max(_dict['start_point'] for _dict in target_lines),
+                   max(_dict['end_point'] for _dict in target_lines))
+        _min = min(min(_dict['start_point'] for _dict in target_lines),
+                   min(_dict['end_point'] for _dict in target_lines))
 
-        _dict = self._get_range_base(self.target_lines, segment)
+        max_point = float(Decimal(_max).quantize(Decimal('.1'),rounding=ROUND_UP))
+        min_point = float(Decimal(_min).quantize(Decimal('.1'),rounding=ROUND_DOWN))
+
+        if self.debug:
+            print('{} - {} / {} - {}'.format(_min,_max))
+            print('{} - {} / {} - {}'.format(min_point,max_point))
+
+        return {'max':max_point, 'min':min_point,}
+
+    def get_range(self):
+        if not self.target_lines:
+            raise MyException('Aggregation data not found.')
+
+        _dict = self._get_range_base(self.target_lines)
         if self.debug:
             for line in self.target_lines:
                 print(line)
@@ -294,8 +332,14 @@ def parse_args():
                                  help='Aggregation range is day')
     parser.add_argument('--segment', dest='segment', action='store', metavar='NUM m or h',default='5m',
                                      help='Time segment to aggregate (Default: 5m)')
+    parser.add_argument('--dsp-segment', dest='dsp_segment', action='store', metavar='NUM', type=int, default='30',
+                                         help='Display time minute (Default: 30 minute)')
     parser.add_argument('--pips', dest='pips', action='store', metavar='NUM',default='10',
                                   help='Pips segment to aggregate (Default: 10 pips)')
+    parser.add_argument('--csv', dest='csv_file', action='store', metavar='FILE_NAME',default='yakujo.csv',
+                                  help='Csv file name to read (Default: yakujo.csv)')
+    parser.add_argument('--out', dest='out_file', action='store', metavar='FILE_NAME',default='result.png',
+                                  help='Output image file name (Default: result.png)')
     parser.add_argument('--debug', dest='debug', action='store_true', default=False, help='Debug')
     parser.add_argument('--version', action='version', version='Version: %s' % version)
 
@@ -327,40 +371,47 @@ def get_aggregation_range(args):
 
     return _dict
 
+def get_color(kind, division):
+    if kind == 'short':
+        return '#00ff00' if division == 'start' else '#ffff33'
+    if kind == 'long':
+        return '#00ff00' if division == 'start' else '#ffff33'
+    return '#333333'
+
+def get_start_color(kind):
+    return get_color(kind, 'start')
+
+def get_end_color(kind):
+    return get_color(kind, 'end')
+
 def main():
     args = parse_args()
-    csv_file = './yakujo.csv'
     try:
-        lion = LionFX(csv_file,logger,args.debug)
+        lion = LionFX(args.csv_file,logger,args.debug)
         agg_range = get_aggregation_range(args)
         if not agg_range['start'] and not agg_range['end']:
             raise MyException('Incorrct aggregation range')
 
-        print(agg_range)
-        range = lion.get_range(agg_range['start'], agg_range['end'], args.segment)
-        glaph_dict = {'xlim':{'start':lion.get_timedate(range['start']),
-                            'end':lion.get_timedate(range['end'])},
-                    'ylim':{'start':range['min'],
-                            'end':range['max']},
-                    'x_interval':int(range['segment']),
+        result_data = lion.get_aggregate_data(agg_range['start'], agg_range['end'], args.segment)
+        point_range = lion.get_range()
+        logger.info('Glaph range: {} - {} ({}) / {} - {}'.format(
+                        agg_range['start'],agg_range['end'],args.dsp_segment,
+                        point_range['min'],point_range['max']))
+        glaph_dict = {'xlim':{'start':lion.get_timedate(agg_range['start']),
+                            'end':lion.get_timedate(agg_range['end'])},
+                    'ylim':{'start':point_range['min'],
+                            'end':point_range['max']},
+                    'x_interval':args.dsp_segment,
                     'y_interval':float(args.pips)/100
         }
-        result_data = lion.get_aggregate_data(agg_range['start'], agg_range['end'], args.segment)
-        for k,v in result_data.items():
-            print(k)
-            print(v)
-    #    graph = MkGraph(glaph_dict,logger,args.debug)
 
-        df = {}
-        df['date'] = [lion.get_timedate('2023/01/20 15:00:00'),
-                    lion.get_timedate('2023/01/20 15:02:00')
-        ]
-        df['val_1'] = [129.650,129.610]
-    #    graph.set_value(df['date'],df['val_1'],'#00ff00','short') # short start
-    #    graph.set_value(df['date'],df['val_1'],'#ffff33','short') # short end
-    #    graph.set_value(df['date'],df['val_1'],'#00ff00','long') # short end
-    #  graph.set_value(df['date'],df['val_1'],'#fff333','long') # short end
-    #    graph.show()
+        graph = MkGraph(glaph_dict,logger,args.debug)
+        logger.info('Start drawing the graph')
+        for r in result_data:
+            graph.set_value(r['start_time'], r['start_point'], get_start_color(r['kind']), r['kind'])
+            graph.set_value(r['end_time'], r['end_point'], get_end_color(r['kind']), r['kind'])
+        graph.show(args.out_file)
+        logger.info('Completed drawing the graph: {}'.format(args.out_file))
     except MyException as e:
         logger.error(e.message)
 

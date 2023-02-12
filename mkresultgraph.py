@@ -166,16 +166,17 @@ class LionFX(CsvControl):
 
         logger.info('Filter by trade set')
         for d in self.target_lines:
+            s_time = self._get_time_unit(d['start_time'],segment)
+            e_time = self._get_time_unit(d['end_time'],segment)
             result_list.append({
-                'start_time' : self.get_timedate(self._get_time_unit(d['start_time'],segment)),
-                'end_time'   : self.get_timedate(self._get_time_unit(d['end_time'],segment)),
+                'start_time' : self.get_timedate(s_time),
+                'end_time'   : self.get_timedate(e_time),
                 'start_point': float(d['start_point']),
                 'end_point'   : float(d['end_point']),
                 'kind':d['kind']
             })
-
-        for r in result_list:
-            logger.info(r)
+            logger.info('{} - {} / {} - {} / {}'.format(
+                        s_time,e_time,d['start_point'],d['end_point'],d['kind']))
 
         logger.info('The count of trade sets is {}'.format(len(result_list)))
         return result_list
